@@ -117,7 +117,7 @@ SYNOPSIS
               [-a|--attach]
               [-e|--dettach]
               [-t|--connected_devs]
-              [-e|--clean]
+              [--clean]
 
 OPTIONS
   -h, --help
@@ -153,10 +153,7 @@ OPTIONS
   -t  --connected_devs
         List connected devices.         
 
-  -f, --foo
-        A flag option
-
-  -e  --clean
+      --clean
       Erase device and ip cache.
 
 EOF
@@ -184,7 +181,7 @@ next_arg() {
 # ':' means preceding option character expects one argument, except
 # first ':' which make getopts run in silent mode. We handle errors with
 # wildcard case catch. Long options are considered as the '-' character
-optspec=":hfb:-:"
+optspec=":hsirdcubaetz:-:"
 args=("" "$@")  # dummy first element so $1 and $args[1] are aligned
 while getopts "$optspec" optchar; do
     case "$optchar" in
@@ -199,7 +196,6 @@ while getopts "$optspec" optchar; do
         a) attach_device; exit 0 ;;
         e) detach_device; exit 0 ;;
         t) list_connected_devices; exit 0 ;;
-        e) clean; exit 0 ;;
         -) # long option processing
             case "$OPTARG" in
                 help)

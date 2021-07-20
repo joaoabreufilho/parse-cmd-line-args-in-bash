@@ -1,0 +1,326 @@
+#!/bin/sh
+
+KV_BASEDIR=$(dirname "$0")
+KV_SCRIPT="${KV_BASEDIR}/"kv-sh
+
+if test ! -e "${KV_SCRIPT}"; then
+	echo "${KV_SCRIPT}: not found"
+	exit 1
+fi
+
+echo "SCRIPT: ${KV_SCRIPT}"
+
+DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+
+TEST_COUNT=0
+TEST_OK_COUNT=0
+TEST_FAILED_COUNT=0
+
+OK()      { echo "[  OK  ]"; TEST_OK_COUNT="$(( $TEST_OK_COUNT + 1 ))"; }
+FAILED()  { echo "[FAILED]"; TEST_FAILED_COUNT="$(( $TEST_FAILED_COUNT + 1 ))"; }
+RESULT()  { test $? = 0 && OK || FAILED; }
+
+
+# Usage: TESTCASE [description string]
+
+TESTCASE() {
+	TEST_COUNT="$(( $TEST_COUNT + 1 ))"
+	printf "%3s %-50s" "${TEST_COUNT}" "${1}"
+}
+
+echo "DATABASE DIRECTORY: ${KV_DB_DIR}"
+
+rm -rf "${KV_DB_DIR}"
+
+echo
+echo "TEST CASES:"
+echo "==================="
+
+TESTCASE 'call kvget for non-exist key should return empty'
+	test "$(kvget name)" = ""
+	RESULT
+
+TESTCASE 'kvset then kvget a variable'
+	kvset name "Tom"
+	test "$(kvget name)" = "Tom"
+	RESULT
+
+TESTCASE 'kvset then kvset again with different value'
+	kvset name "Tom"
+	kvset name "Jerry"
+	test "$(kvget name)" = "Jerry"
+	RESULT
+
+TESTCASE 'deleted variable should be empty'
+	kvset name "hello world!"
+	kvdel name
+	test "$(kvget name)" = ""
+	RESULT
+
+TESTCASE 'kvdel non exist should be OK'
+	kvdel name
+	test "$(kvdel name 2>&1)" = ""
+	RESULT
+
+TESTCASE 'kvset without param return error'
+	kvset 2>/dev/null
+	test $? != 0
+	RESULT
+
+TESTCASE 'kvget without param return error'
+	kvget 2>/dev/null
+	test $? != 0
+	RESULT
+
+TESTCASE 'kvdel without param return error'
+	kvdel 2>/dev/null
+	test $? != 0
+	RESULT
+
+TESTCASE 'kvset 3 keys/value; kvlist => line count = 3'
+	kvclear
+	kvset var1 value1
+	kvset var2 value2
+	kvset var3 value3
+	test $(kvlist | wc -l) = 3
+	RESULT
+
+TESTCASE 'kvset 3 keys/value; kvkeys => line count = 3'
+        kvclear
+        kvset var1 value1
+        kvset var2 value2
+        kvset var3 value3
+        test $(kvkeys | wc -l) = 3
+        RESULT
+
+TESTCASE 'spaces in value'
+        kvset name '  phat  dam  '
+        test "$(kvget name)" = '  phat  dam  '
+        RESULT
+        kvdel name
+
+TESTCASE 'non-exist-var => empty value => line count = 1'
+	test $(kvget non-exist-var | wc -l)  = 1
+	RESULT
+
+TESTCASE 'kvclear; kvlist => line count = 0'
+	kvset cat Tom
+	kvset mouse Jerry
+	kvclear
+	test $(kvlist | wc -l) = 0
+	RESULT
+
+TESTCASE 'kvclear; kvkeys => line count = 0'
+        kvset cat Tom
+        kvset mouse Jerry
+        kvclear
+        test $(kvkeys | wc -l) = 0
+        RESULT
+
+TESTCASE 'kvexists non exist => error code != 0'
+    	kvdel name
+    	$(kvexists name)
+    	test $? != 0
+    	RESULT
+
+TESTCASE 'kvexists exist empty => error code = 0'
+    	kvset name_empty
+    	$(kvexists name_empty)
+    	test $? = 0
+    	RESULT
+
+TESTCASE 'kvexists exists value => error code = 0'
+    	kvset name_value value
+    	$(kvexists name_value)
+    	test $? = 0
+	RESULT
+
+TESTCASE 'kvclear; kvset => directory created'
+	kvclear
+	kvset key value
+	test -d "${KV_DB_DIR}"
+	RESULT
+
+TESTCASE 'kvset; kvclear => directory deleted'
+        kvset key value
+	kvclear
+        test ! -d "${KV_DB_DIR}"
+        RESULT
+
+TESTCASE 'kvclear; kvdump => line count = 0'
+        kvset cat Tom
+        kvset mouse Jerry
+        kvclear
+        test $(kvdump | wc -l) = 0
+        RESULT
+
+TESTCASE 'kvset 3 keys/value; kvdump => line count = 3'
+	kvclear
+        kvset cat Tom
+        kvset mouse Jerry
+	kvset key value
+        test $(kvdump | wc -l) = 3
+        RESULT
+
+TESTCASE 'kvdump; kvclear; kvimport'
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6 "
+        kvset key3 " 7 8 9 = 10 "
+	kvdump > "/tmp/.kvdump"
+	kvclear
+	kvimport < "/tmp/.kvdump"
+	rm "/tmp/.kvdump"
+        {
+		test $(kvkeys | wc -l) = 3 && \
+		test "$(kvget key1)" = "1 2 3" && \
+ 		test "$(kvget key2)" = "4 5 6 " && \
+ 		test "$(kvget key3)" = " 7 8 9 = 10 "
+	}
+        RESULT
+
+TESTCASE 'kvdump; kvimport'
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6 "
+        kvdump > "/tmp/.kvdump"
+        kvclear
+	kvset key3 " 7 8 9 = 10 "
+        kvset key4 " 7 8 9 = 12 "
+        kvimport < "/tmp/.kvdump"
+        rm "/tmp/.kvdump"
+        {
+                test $(kvkeys | wc -l) = 4 && \
+                test "$(kvget key1)" = "1 2 3" && \
+                test "$(kvget key2)" = "4 5 6 " && \
+                test "$(kvget key3)" = " 7 8 9 = 10 " && \
+		test "$(kvget key4)" = " 7 8 9 = 12 "
+        }
+        RESULT
+
+TESTCASE 'kvdump; kvrestore'
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6 "
+        kvset key3 " 7 8 9 = 11 "
+        kvdump > "/tmp/.kvdump"
+        kvclear
+	kvset key5 "a"
+	kvset key6 "b"
+        kvrestore < "/tmp/.kvdump"
+        rm "/tmp/.kvdump"
+        {
+                test $(kvkeys | wc -l) = 3 && \
+                test "$(kvget key1)" = "1 2 3" && \
+                test "$(kvget key2)" = "4 5 6 " && \
+                test "$(kvget key3)" = " 7 8 9 = 11 "
+        }
+        RESULT
+
+TESTCASE 'kvget with defaults database'
+        DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-default" . "${KV_SCRIPT}"
+	kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6"
+        kvset key3 "7 8 9"
+	DB_DEFAULTS_DIR="/tmp/.kv-default" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+	kvclear
+	kvset key2 "a b c"
+        {
+                test $(kvkeys | wc -l) = 3 && \
+                test "$(kvget key1)" = "1 2 3" && \
+                test "$(kvget key2)" = "a b c" && \
+                test "$(kvget key3)" = "7 8 9"
+        }
+        RESULT
+
+TESTCASE 'kvdel with defaults database'
+        DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-default" . "${KV_SCRIPT}"
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6"
+        kvset key3 "7 8 9"
+        DB_DEFAULTS_DIR="/tmp/.kv-default" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+        kvclear
+        kvset key2 "a b c"
+	_tmp=$(kvget key2)
+	kvdel key2
+        {
+                test $(kvkeys | wc -l) = 3 && \
+		test "${_tmp}" = "a b c" && \
+                test "$(kvget key1)" = "1 2 3" && \
+                test "$(kvget key2)" = "4 5 6" && \
+                test "$(kvget key3)" = "7 8 9"
+        }
+        RESULT
+
+TESTCASE 'kvset; kvkeys with defaults database'
+        DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-default" . "${KV_SCRIPT}"
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6"
+        kvset key3 "7 8 9"
+        DB_DEFAULTS_DIR="/tmp/.kv-default" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+        kvclear
+        kvset key2 "a b c"
+	kvset key4 "0 0 0"
+	{
+		test $(kvkeys -l | wc -l) = 2 && \
+		test $(kvkeys -d | wc -l) = 3 && \
+ 		test $(kvkeys -a | wc -l) = 4 && \
+ 		test $(kvkeys | wc -l) = 4
+	}
+	RESULT
+
+TESTCASE 'kvset; kvdump with defaults database'
+        DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-default" . "${KV_SCRIPT}"
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6"
+        kvset key3 "7 8 9"
+        DB_DEFAULTS_DIR="/tmp/.kv-default" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+        kvclear
+        kvset key2 "a b c"
+        kvset key4 "0 0 0"
+        {
+                test $(kvdump -a | wc -l) = 4 && \
+                test $(kvdump | wc -l) = 2
+        }
+        RESULT
+
+
+TESTCASE 'kvset; kvlist with defaults database'
+        DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-default" . "${KV_SCRIPT}"
+        kvclear
+        kvset key1 "1 2 3"
+        kvset key2 "4 5 6"
+        kvset key3 "7 8 9"
+        DB_DEFAULTS_DIR="/tmp/.kv-default" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+        kvclear
+        kvset key2 "a b c"
+        kvset key4 "0 0 0"
+        {
+                test $(kvlist -a | wc -l) = 4 && \
+                test $(kvlist | wc -l) = 2
+	}
+        RESULT
+
+#
+# Clean up
+#
+DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-default" . "${KV_SCRIPT}"
+kvclear
+DB_DEFAULTS_DIR="" DB_DIR="/tmp/.kv-test" . "${KV_SCRIPT}"
+kvclear
+
+#
+# Statistics and exit value
+# 
+echo "==================="
+echo "TESTS:        ${TEST_COUNT}"
+echo "TESTS OK:     ${TEST_OK_COUNT}"
+echo "TESTS FAILED: ${TEST_FAILED_COUNT}"
+
+echo
+
+test "${TEST_FAILED_COUNT}" = 0 && exit 0 || exit 1

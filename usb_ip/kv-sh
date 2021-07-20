@@ -1,0 +1,217 @@
+#!/bin/echo Should be run as: .
+
+# kv-sh
+# Version 1.2.0
+#
+# Author: Ilkka Myller <ilkka.myller@nodefield.com>
+# Repository: https://github.com/imyller/kv-sh
+# Requirements: standard shell, unix-like environment, no dependencies
+# Based on kv-bash script by damphat (https://github.com/damphat/kv-bash)
+#
+# USAGE:
+#    . ./kv-sh          	# import kv-sh functions (use default database directory; see
+#				  configuration environment variables for available options)
+#    kvset <key> <value>     	# assign value to key
+#    kvget <key>             	# get value of key
+#    kvdel <key>             	# delete key
+#    kvexists <key>		# check if key exists
+#    kvkeys {-l|-d|-a}          # list all keys (-l local only, -d default only, -a all (default))
+#    kvlist {-a}             	# list all key/value pairs (-a all keys, including default)
+#    kvdump {-a}		# database dump (-a all keys, including default)
+#    kvimport			# database import (overwrite)
+#    kvrestore			# database restore (clear and restore)
+#    kvclear                 	# clear database
+#
+# CONFIGURATION ENVIRONMENT VARIABLES:
+#	DB_DIR			# if set when importing kv-sh, use custom database directory
+#	DB_DEFAULTS_DIR		# if set when importing kv-sh, enable read-only default key-values
+#				  from another database directory
+#
+
+########################
+# CONSTANTS
+########################
+
+# KV_DB_DIR
+
+if test ! -z "${DB_DIR}"; then
+	KV_DB_DIR="${DB_DIR}"
+else
+	KV_DB_DIR="$HOME/.kv-sh"
+fi
+
+# KV_DB_DEFAULTS_DIR
+
+if test ! -z "${DB_DEFAULTS_DIR}"; then
+        KV_DB_DEFAULTS_DIR="${DB_DEFAULTS_DIR}"
+else
+        KV_DB_DEFAULTS_DIR=""
+fi
+
+########################
+# LOCAL FUNCTIONS
+########################
+
+# print to stderr
+kv_echo_err() {
+	echo -e "${@}" >&2
+}
+
+# Usage: kv_echo_err_box <err-msg> <function-name>
+kv_echo_err_box() {
+	kv_echo_err "  +-------------------------------+"
+	kv_echo_err "  | ERROR: $1"
+	kv_echo_err "  | function: $2"
+	kv_echo_err "  +-------------------------------+"
+}
+
+# Usage: kv_validate_key <key>
+kv_validate_key() {
+	echo "${1}" | grep -Eq '^[0-9a-zA-Z._:-]+$'
+	test "$?" = "0"
+}
+
+########################
+# PUBLIC FUNCTIONS
+########################
+
+# Usage: kvget <key>
+kvget() {
+	local key="${1}"
+	kv_validate_key "${key}" || {
+		kv_echo_err_box 'invalid param "key"' 'kvget()'
+		return 1
+	}
+	local value
+	if test -f "${KV_DB_DIR}/${key}"; then
+		value="$(cat "${KV_DB_DIR}/${key}")"
+ 	elif ( test ! -z "${KV_DB_DEFAULTS_DIR}" && test -f "${KV_DB_DEFAULTS_DIR}/${key}" ); then
+		value="$(cat "${KV_DB_DEFAULTS_DIR}/${key}")"
+	else
+		value=""
+	fi
+	echo "${value}"
+}
+
+# Usage: kvexists <key>
+kvexists() {
+   	local key="${1}"
+        kv_validate_key "${key}" || {
+                kv_echo_err_box 'invalid param "key"' 'kvexists()'
+                return 1
+        }
+        test -f "${KV_DB_DIR}/${key}" || (test ! -z "${KV_DB_DEFAULTS_DIR}" && test -f "${KV_DB_DEFAULTS_DIR}/${key}")
+}
+
+# Usage: kvset <key> [value]
+kvset() {
+	local key="${1}"
+	local value="${2}"
+	kv_validate_key "${key}" || {
+		kv_echo_err_box 'invalid param "key"' 'kvset()'
+		return 1
+	}
+	test -d "${KV_DB_DIR}" || mkdir "${KV_DB_DIR}"
+	printf "${value}" > "${KV_DB_DIR}/${key}"
+}
+
+# Usage: kvdel <key>
+kvdel() {
+	local key="${1}"
+	kv_validate_key "${key}" || {
+		kv_echo_err_box 'invalid param "key"' 'kvdel()'
+		return 1
+	}
+	test -f "${KV_DB_DIR}/${key}" && rm -f "${KV_DB_DIR}/${key}"
+}
+
+# list all keys to stdout
+# Usage: kvkeys
+kvkeys() {
+	local keyfiles=""
+	case "$1" in
+	    	-l)
+			keyfiles="$(ls "${KV_DB_DIR}/"* 2> /dev/null)"
+			;;
+		-d)
+			[ ! -z "${KV_DB_DEFAULTS_DIR}" ] && keyfiles="$(ls "${KV_DB_DEFAULTS_DIR}/"* 2> /dev/null)"
+			;;
+		-a|*)
+			keyfiles=$(ls "${KV_DB_DIR}/"* 2> /dev/null)
+			[ ! -z "${KV_DB_DEFAULTS_DIR}" ] && keyfiles="${keyfiles} $(ls "${KV_DB_DEFAULTS_DIR}/"* 2> /dev/null)"
+			;;
+	esac
+	if [ ! -z "${keyfiles}" ]; then
+		local keys=""
+		local i
+		( for i in ${keyfiles}; do
+                	if test -f "$i"; then
+                       		echo "$(basename "$i")"
+                	fi
+        	done ) | sort | uniq
+	fi
+}
+
+# list all key/value pairs to stdout
+# Usage: kvlist
+kvlist() {
+	local mode=""
+	local key
+        case "$1" in
+                -a)
+                        mode="-a"
+                        ;;
+                *)
+                        mode="-l"
+                        ;;
+        esac
+        for key in $(kvkeys ${mode}); do
+		echo ${key} $(kvget "${key}")
+        done
+}
+
+# clear all key/value pairs in database
+# Usage: kvclear
+kvclear() {
+        rm -rf "${KV_DB_DIR}"
+}
+
+# dump key/value pairs to stdout
+# Usage: kvdump
+kvdump() {
+	local mode=""
+	local key
+	case "$1" in
+                -a)
+                        mode="-a"
+                        ;;
+                *)
+                        mode="-l"
+                        ;;
+        esac
+	for key in $(kvkeys ${mode}); do
+       		echo "${key}=\"$(kvget "${key}")\""
+	done
+}
+
+
+# import key/value pairs to database
+# Usage: kvimport
+kvimport() {
+	local key
+	local qvalue
+	local value
+	while read -r line; do
+		key=$(echo "$line" | cut -d'=' -f1)
+		qvalue=$(echo "$line" | cut -d'=' -f2-)
+		value=$(eval echo "${qvalue}")
+		kvset "${key}" "${value}"
+	done
+}
+
+# restore all key/value pairs in database
+# Usage: kvrestore
+kvrestore() {
+	kvclear
+	kvimport
+}
